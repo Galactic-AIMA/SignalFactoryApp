@@ -6,45 +6,93 @@ import type { VideoStyle, TextEffect, RenderProgress } from "@/types";
 const STYLES: VideoStyle[] = ["unified", "serene", "raw", "minimal", "cinematic", "bold"];
 const EFFECTS: TextEffect[] = ["fadeIn", "typewriter", "slideUp", "scaleIn", "glowPulse"];
 
+const SS_KEY   = "sf_batch_state";
+const SS_START = "sf_batch_start";
+
+interface SavedBatch {
+  desde: number;
+  hasta: number;
+  idioma: "es" | "en" | "ambos";
+  estilo: VideoStyle;
+  efecto: TextEffect;
+}
+
 export default function BatchPage() {
-  const [desde, setDesde] = useState(0);
-  const [hasta, setHasta] = useState(9);
-  const [idioma, setIdioma] = useState<"es" | "en" | "ambos">("ambos");
-  const [estilo, setEstilo] = useState<VideoStyle>("unified");
-  const [efecto, setEfecto] = useState<TextEffect>("fadeIn");
-  const [progress, setProgress] = useState<RenderProgress | null>(null);
-  const [running, setRunning] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [eta, setEta] = useState<string | null>(null);
+  // Restaurar form desde sessionStorage si existe
+  const saved: SavedBatch | null = (() => {
+    if (typeof window === "undefined") return null;
+    try { return JSON.parse(sessionStorage.getItem(SS_KEY) || "null"); } catch { return null; }
+  })();
+
+  const [desde,  setDesde]  = useState(saved?.desde  ?? 0);
+  const [hasta,  setHasta]  = useState(saved?.hasta   ?? 9);
+  const [idioma, setIdioma] = useState<"es" | "en" | "ambos">(saved?.idioma ?? "ambos");
+  const [estilo, setEstilo] = useState<VideoStyle>(saved?.estilo ?? "unified");
+  const [efecto, setEfecto] = useState<TextEffect>(saved?.efecto ?? "fadeIn");
+
+  const [progress,     setProgress]     = useState<RenderProgress | null>(null);
+  const [running,      setRunning]      = useState(false);
+  const [initializing, setInitializing] = useState(true); // true hasta primer mensaje SSE
+  const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
+  const [eta,          setEta]          = useState<string | null>(null);
+
   const eventSourceRef = useRef<EventSource | null>(null);
-  const startTimeRef = useRef<number | null>(null);
+  const startTimeRef   = useRef<number | null>(null);
+
+  function persistFormState(overrides: Partial<SavedBatch> = {}) {
+    const state: SavedBatch = {
+      desde, hasta, idioma, estilo, efecto, ...overrides,
+    };
+    sessionStorage.setItem(SS_KEY, JSON.stringify(state));
+  }
 
   function connectSSE() {
     if (eventSourceRef.current) eventSourceRef.current.close();
     const es = new EventSource("/api/render/progress");
+
     es.onmessage = (event) => {
       const data = JSON.parse(event.data) as RenderProgress;
       setProgress(data);
+      setInitializing(false);
+
       if (data.status === "rendering") {
         setRunning(true);
-        if (!startTimeRef.current) startTimeRef.current = Date.now();
+
+        // Restaurar startTime desde sessionStorage si no lo tenemos en memoria
+        if (!startTimeRef.current) {
+          const stored = sessionStorage.getItem(SS_START);
+          startTimeRef.current = stored ? parseInt(stored) : Date.now();
+          if (!stored) sessionStorage.setItem(SS_START, String(startTimeRef.current));
+        }
+
         // Calcular ETA
         if (data.completado > 0 && startTimeRef.current) {
-          const elapsed = (Date.now() - startTimeRef.current) / 1000;
+          const elapsed      = (Date.now() - startTimeRef.current) / 1000;
           const secPerNumber = elapsed / data.completado;
-          const remaining = (data.total - data.completado) * secPerNumber;
-          const mins = Math.round(remaining / 60);
+          const remaining    = (data.total - data.completado) * secPerNumber;
+          const mins         = Math.round(remaining / 60);
           setEta(mins <= 1 ? "~1 min" : `~${mins} min`);
         }
       }
+
       if (data.status === "done" || data.status === "error") {
         setRunning(false);
         setEta(null);
         startTimeRef.current = null;
+        sessionStorage.removeItem(SS_START);
+        sessionStorage.removeItem(SS_KEY);
       }
     };
+
+    es.onerror = () => setInitializing(false);
     eventSourceRef.current = es;
   }
+
+  // Conectar SSE al montar y recuperar estado si hay lote activo
+  useEffect(() => {
+    connectSSE();
+    return () => eventSourceRef.current?.close();
+  }, []);
 
   async function handleStart() {
     setErrorMsg(null);
@@ -58,19 +106,24 @@ export default function BatchPage() {
       setErrorMsg(data.error);
       return;
     }
+    // Persistir en sessionStorage para sobrevivir navegación
+    persistFormState();
+    sessionStorage.setItem(SS_START, String(Date.now()));
+    startTimeRef.current = Date.now();
     setRunning(true);
+    setEta(null);
     connectSSE();
   }
 
-  // Al montar: conectar SSE y recuperar estado si hay lote activo
-  useEffect(() => {
-    connectSSE();
-    return () => eventSourceRef.current?.close();
-  }, []);
+  async function handleCancel() {
+    await fetch("/api/batch", { method: "DELETE" });
+  }
 
   const pct = progress && progress.total > 0
     ? Math.round((progress.completado / progress.total) * 100)
     : 0;
+
+  const totalVideos = idioma === "ambos" ? (hasta - desde + 1) * 2 : hasta - desde + 1;
 
   return (
     <div className="space-y-6">
@@ -79,6 +132,7 @@ export default function BatchPage() {
         <p className="text-sf-muted text-sm mt-1">Renderiza un rango de números angelicales</p>
       </div>
 
+      {/* Formulario */}
       <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-4">
         <div className="flex gap-4 items-end flex-wrap">
           <div>
@@ -129,9 +183,7 @@ export default function BatchPage() {
           </button>
           {running && (
             <button
-              onClick={async () => {
-                await fetch("/api/batch", { method: "DELETE" });
-              }}
+              onClick={handleCancel}
               className="px-4 py-2 rounded-lg border border-red-500/50 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
             >
               Cancelar
@@ -146,33 +198,56 @@ export default function BatchPage() {
         )}
 
         <p className="text-xs text-sf-muted">
-          Total: {hasta - desde + 1} números ×{" "}
-          {idioma === "ambos" ? "2 idiomas" : idioma.toUpperCase()} ={" "}
-          {idioma === "ambos" ? (hasta - desde + 1) * 2 : hasta - desde + 1} videos
+          Total: {hasta - desde + 1} números × {idioma === "ambos" ? "2 idiomas" : idioma.toUpperCase()} = {totalVideos} videos
         </p>
       </div>
 
-      {/* Progreso */}
-      {progress && progress.status !== "idle" && (
+      {/* Progreso — skeleton mientras inicializa, luego estado real */}
+      {initializing ? (
+        <div className="bg-sf-surface border border-sf-border rounded-xl p-6">
+          <div className="flex items-center gap-2 text-sf-muted text-sm">
+            <span className="w-2 h-2 rounded-full bg-sf-muted animate-pulse inline-block" />
+            Verificando estado del servidor...
+          </div>
+        </div>
+      ) : progress && progress.status !== "idle" && (
         <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-3">
           <div className="flex justify-between text-sm">
-            <span>Progreso: {progress.completado}/{progress.total}</span>
+            <span className="font-medium">
+              {progress.completado}/{progress.total} números
+            </span>
             <div className="flex items-center gap-3">
               {eta && progress.status === "rendering" && (
                 <span className="text-sf-muted text-xs">{eta} restantes</span>
               )}
-              <span className={progress.status === "done" ? "text-green-400" : progress.status === "error" ? "text-red-400" : "text-sf-accent"}>
-                {progress.status === "rendering" ? `Renderizando #${progress.actual}...` : progress.status === "done" ? "✅ Completado" : "❌ Error"}
+              <span className={
+                progress.status === "done"  ? "text-green-400" :
+                progress.status === "error" ? "text-red-400"   : "text-sf-accent"
+              }>
+                {progress.status === "rendering"
+                  ? `Renderizando #${progress.actual}...`
+                  : progress.status === "done"
+                    ? "✅ Completado"
+                    : "❌ Error"}
               </span>
             </div>
           </div>
+
           <div className="w-full bg-sf-bg rounded-full h-3 overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-sf-primary to-sf-accent rounded-full transition-all duration-300"
               style={{ width: `${pct}%` }}
             />
           </div>
-          <p className="text-xs text-sf-muted text-right">{pct}%</p>
+
+          <div className="flex justify-between text-xs text-sf-muted">
+            <span>
+              {progress.status === "rendering" && saved
+                ? `Lote ${saved.desde}–${saved.hasta} · ${saved.idioma === "ambos" ? "ES + EN" : saved.idioma.toUpperCase()}`
+                : ""}
+            </span>
+            <span>{pct}%</span>
+          </div>
         </div>
       )}
     </div>
