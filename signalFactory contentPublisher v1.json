@@ -1,0 +1,215 @@
+{
+  "name": "signalFactory contentPublisher v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "signalFactory",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "📥 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "sf-2026-publisher-v1",
+      "notes": "PAYLOAD RECIBIDO DESDE SIGNALFACTORY:\n{\n  \"angel_number\": 42,\n  \"grupo\": 2,\n  \"grupo_nombre\": \"Flujo y Abundancia\",\n  \"renders\": [\n    {\n      \"idioma\": \"es\",\n      \"videoUrl\": \"https://pub-xxx.r2.dev/es/042.mp4\",\n      \"titulo\": \"Número Angelical 42 🌊 Tu Señal de Hoy\",\n      \"descripcion\": \"Tu señal de hoy: 42...\",\n      \"tags\": [\"número angelical 42\", \"espiritualidad\", ...]\n    },\n    {\n      \"idioma\": \"en\",\n      \"videoUrl\": \"https://pub-xxx.r2.dev/en/042.mp4\",\n      \"titulo\": \"Angel Number 42 🌊 Your Daily Sign\",\n      \"descripcion\": \"Your sign today: 42...\",\n      \"tags\": [\"angel number 42\", \"spirituality\", ...]\n    }\n  ],\n  \"timestamp\": \"2026-05-05T...\"\n}\nResponde HTTP 200 inmediatamente. El procesamiento es asíncrono."
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $('📥 Webhook Trigger').item.json.body;\nconst renders = body.renders || [];\n\nreturn renders\n  .filter(r => r.videoUrl)\n  .map(r => ({\n    json: {\n      idioma: r.idioma,\n      videoUrl: r.videoUrl,\n      titulo: r.titulo,\n      descripcion: r.descripcion,\n      tags: Array.isArray(r.tags) ? r.tags.join(',') : (r.tags || ''),\n      angel_number: body.angel_number,\n      grupo: body.grupo,\n      grupo_nombre: body.grupo_nombre,\n      timestamp: body.timestamp\n    }\n  }));"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "📦 Preparar Renders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "notes": "Expande renders[] en items individuales (uno por idioma).\nFiltra renders sin videoUrl (si R2 no estaba configurado).\nn8n procesa cada item por el resto del workflow de forma secuencial."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.videoUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "⬇️ Descargar Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "continueOnFail": true,
+      "notes": "Descarga el video MP4 desde Cloudflare R2 como binario.\nURL pública: https://pub-0c3cf1907aa740ce9aa67cc35b2be0e6.r2.dev/{idioma}/{numero}.mp4"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "idioma-check",
+              "leftValue": "={{ $('📦 Preparar Renders').item.json.idioma }}",
+              "rightValue": "es",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "🔀 ¿Español?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "notes": "Rama TRUE → YouTube 'Tu Señal de Hoy' (ES)\nRama FALSE → YouTube 'Your Daily Sign' (EN)"
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('📦 Preparar Renders').item.json.titulo }}",
+        "regionCode": "CO",
+        "categoryId": "22",
+        "options": {
+          "description": "={{ $('📦 Preparar Renders').item.json.descripcion }}",
+          "notifySubscribers": false,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": false,
+          "tags": "={{ $('📦 Preparar Renders').item.json.tags }}"
+        }
+      },
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "▶️ YouTube ES",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [960, 180],
+      "continueOnFail": true,
+      "notes": "⚙️ CONFIGURAR: seleccionar credencial de 'Tu Señal de Hoy'\ncategoryId 22 = People & Blogs (apropiado para espiritualidad)\nprivacyStatus: private → cambiar a public cuando los canales estén listos"
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('📦 Preparar Renders').item.json.titulo }}",
+        "regionCode": "CO",
+        "categoryId": "22",
+        "options": {
+          "description": "={{ $('📦 Preparar Renders').item.json.descripcion }}",
+          "notifySubscribers": false,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": false,
+          "tags": "={{ $('📦 Preparar Renders').item.json.tags }}"
+        }
+      },
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "▶️ YouTube EN",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [960, 420],
+      "continueOnFail": true,
+      "notes": "⚙️ CONFIGURAR: seleccionar credencial de 'Your Daily Sign'\ncategoryId 22 = People & Blogs\nprivacyStatus: private → cambiar a public cuando los canales estén listos"
+    },
+    {
+      "parameters": {
+        "jsCode": "const upload = $input.item.json;\nconst render = $('📦 Preparar Renders').item.json;\nconst isError = !!(upload.error || upload.status === 'failed');\nreturn [{ json: {\n  idioma: render.idioma,\n  angel_number: render.angel_number,\n  titulo: render.titulo,\n  grupo_nombre: render.grupo_nombre,\n  status: isError ? 'ERROR' : 'SUCCESS',\n  videoId: isError ? null : (upload.id || null),\n  errorDetails: isError ? (upload.error?.message || JSON.stringify(upload).slice(0, 200)) : null,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "✅ Resultado ES",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const upload = $input.item.json;\nconst render = $('📦 Preparar Renders').item.json;\nconst isError = !!(upload.error || upload.status === 'failed');\nreturn [{ json: {\n  idioma: render.idioma,\n  angel_number: render.angel_number,\n  titulo: render.titulo,\n  grupo_nombre: render.grupo_nombre,\n  status: isError ? 'ERROR' : 'SUCCESS',\n  videoId: isError ? null : (upload.id || null),\n  errorDetails: isError ? (upload.error?.message || JSON.stringify(upload).slice(0, 200)) : null,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "✅ Resultado EN",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 420]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "Ciro",
+        "remoteJid": "573017831245",
+        "messageText": "={{ \"*SignalFactory* \" + ($json.status === 'SUCCESS' ? '✅' : '❌') + \" | \" + $json.idioma.toUpperCase() + \" | #\" + $json.angel_number + \" — \" + $json.grupo_nombre + \"\\n\" + $json.titulo.slice(0, 60) + ($json.videoId ? \"\\n🔗 youtube.com/watch?v=\" + $json.videoId : \"\\n⚠️ \" + ($json.errorDetails || 'Sin detalle')) }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [1440, 180],
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "📱 WhatsApp ES",
+      "notes": "Notificación por WhatsApp cuando termina el upload ES.\n✅ SUCCESS → incluye link de YouTube\n❌ ERROR → incluye mensaje de error"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "Ciro",
+        "remoteJid": "573017831245",
+        "messageText": "={{ \"*SignalFactory* \" + ($json.status === 'SUCCESS' ? '✅' : '❌') + \" | \" + $json.idioma.toUpperCase() + \" | #\" + $json.angel_number + \" — \" + $json.grupo_nombre + \"\\n\" + $json.titulo.slice(0, 60) + ($json.videoId ? \"\\n🔗 youtube.com/watch?v=\" + $json.videoId : \"\\n⚠️ \" + ($json.errorDetails || 'Sin detalle')) }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [1440, 420],
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "📱 WhatsApp EN",
+      "notes": "Notificación por WhatsApp cuando termina el upload EN."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📥 Webhook Trigger": {
+      "main": [[{"node": "📦 Preparar Renders", "type": "main", "index": 0}]]
+    },
+    "📦 Preparar Renders": {
+      "main": [[{"node": "⬇️ Descargar Video", "type": "main", "index": 0}]]
+    },
+    "⬇️ Descargar Video": {
+      "main": [[{"node": "🔀 ¿Español?", "type": "main", "index": 0}]]
+    },
+    "🔀 ¿Español?": {
+      "main": [
+        [{"node": "▶️ YouTube ES", "type": "main", "index": 0}],
+        [{"node": "▶️ YouTube EN", "type": "main", "index": 0}]
+      ]
+    },
+    "▶️ YouTube ES": {
+      "main": [[{"node": "✅ Resultado ES", "type": "main", "index": 0}]]
+    },
+    "▶️ YouTube EN": {
+      "main": [[{"node": "✅ Resultado EN", "type": "main", "index": 0}]]
+    },
+    "✅ Resultado ES": {
+      "main": [[{"node": "📱 WhatsApp ES", "type": "main", "index": 0}]]
+    },
+    "✅ Resultado EN": {
+      "main": [[{"node": "📱 WhatsApp EN", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "sf-v1-2026-05-05",
+  "meta": {
+    "instanceId": "2e33dfd6f3e254feb36813982fa92cbecc5b145509d336043acaf5e637675b54"
+  },
+  "id": "signalFactory-publisher-v1",
+  "tags": []
+}

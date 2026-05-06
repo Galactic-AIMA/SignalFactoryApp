@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+.cache/
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Videos renderizados
+output/
+
+# Base de datos SQLite (runtime, se regenera con npm run db:seed)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Variables de entorno (NUNCA subir al repo)
+.env
+
+# Assets pesados — compartir por Google Drive (ver README de entrega)
+assets/backgrounds/
+assets/music/

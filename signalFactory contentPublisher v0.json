@@ -1,0 +1,453 @@
+{
+  "name": "signalFactory contentPublisher v0",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "signalFactory",
+        "options": {}
+      },
+      "id": "ee2a8ddf-fafb-4923-a347-9723b7fe5849",
+      "name": "📥 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        320
+      ],
+      "webhookId": "1d0fc4f7-c208-4a38-ae0d-e64c32045774",
+      "notes": "PAYLOAD ESPERADO:\n{\n  \"videoUrl\": \"https://...\",\n  \"phrase\": \"La frase del video\",\n  \"filename\": \"nombre.mp4\",\n  \"createdAt\": \"2026-...\"\n}\nResponde HTTP 200 inmediatamente. El procesamiento es asíncrono."
+    },
+    {
+      "parameters": {
+        "jsCode": "const phrase = $('📥 Webhook Trigger').item.json.body.phrase || '';\n\nconst systemPrompt = `Eres un especialista en estrategia de YouTube Shorts para la marca \"BeBetter Path\". Tu objetivo es maximizar la retención y el alcance mediante títulos de alta curiosidad y descripciones optimizadas para SEO.\n\nSe te dará una frase o concepto. Genera los metadatos en un objeto JSON puro.\n\nREGLAS DE TONO:\n- Voz: Mentor crudo, directo y autoritario. \n- Vocabulario permitido: Brutal, crudo, inevitable, disciplina, forjar, honor.\n- Prohibido: Increíble, asombroso, genial, \"click aquí\".\n- Lenguaje masculino y estoico.\n\nREGLAS DE FORMATO:\n- Título: Máximo 60 caracteres. Debe generar intriga o abordar un problema doloroso (Ej: \"Por qué estás fracasando en...\"). Sin emojis ni caracteres especiales: \\\\ / : * ? < > |\n- Descripción: Un párrafo sólido (3-5 líneas) que use palabras clave (estoicismo, disciplina, mentalidad, éxito).\n- Footer: Debe terminar EXACTAMENTE con el footer de marca y los hashtags técnicos.\n\nResponde ÚNICAMENTE con este formato JSON:\n\n{\n  \"title\": \"Título de alto impacto basado en la curiosidad\",\n  \"description\": \"Cuerpo de la descripción enfocado en SEO y mentalidad.\\n\\nEl proceso no se negocia.\\n@TheBeBetterPath ⚔️\\n\\n#TheBeBetterPath #Shorts #Estoicismo #Disciplina #Mentalidad\",\n  \"tags\": \"bebetterpath,estoicismo,disciplina,mentalidad,shorts,crecimientopersonal,exito,filosofia,motivacion,autodisciplina\"\n}`;\n\nconst requestBody = {\n  system_instruction: { parts: [{ text: systemPrompt }] },\n  contents: [{ role: 'user', parts: [{ text: phrase }] }],\n  generationConfig: { \n    temperature: 0.7,\n    response_mime_type: \"application/json\"\n  }\n};\n\nreturn [{ json: { requestBody: JSON.stringify(requestBody) } }];"
+      },
+      "id": "60c8e8d4-674f-4ab1-b5e3-916266397934",
+      "name": "🎬 Build YT Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        224
+      ],
+      "notes": "✏️ EDITAR PROMPT AQUÍ: modifica systemPrompt para cambiar el estilo de los metadatos de YouTube.\nCambia 'gemini-2.0-flash' en el nodo siguiente para cambiar el modelo."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyCiFczRUPDnMw3Q9FvlB5knlhAGjsuzQJI",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "11126a22-3aeb-4649-826d-8f6fa82e2a2b",
+      "name": "🎬 Gemini YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        224
+      ],
+      "continueOnFail": true,
+      "notes": "⚙️ CONFIGURAR: reemplazar REEMPLAZAR_CON_GEMINI_API_KEY en la URL con tu API Key de Google AI Studio.\n⚙️ CAMBIAR MODELO: editar 'gemini-2.0-flash' en la URL por otro modelo si es necesario."
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.candidates?.[0]?.content?.parts?.[0]?.text || '';\nlet ytMeta;\ntry {\n  const cleaned = raw.trim().replace(/^```json\\s*/i, '').replace(/```\\s*$/, '');\n  ytMeta = JSON.parse(cleaned);\n  if (!ytMeta.title || !ytMeta.description || !ytMeta.tags) throw new Error('Campos incompletos');\n} catch(e) {\n  const phrase = $('📥 Webhook Trigger').item.json.body.phrase || '';\n  ytMeta = {\n    title: phrase.slice(0, 60).replace(/[\\/\\\\:*?\"<>|]/g, '').trim(),\n    description: 'El proceso no se negocia.\\n@bebetter.path ⚔️\\n\\n#Shorts',\n    tags: 'bebetter,motivacion,disciplina,estoicismo,shorts,mindset'\n  };\n}\nif (!ytMeta.description.includes('#Shorts')) {\n  ytMeta.description = ytMeta.description.trimEnd() + '\\n\\n#Shorts';\n}\nreturn [{ json: { ytTitle: ytMeta.title, ytDescription: ytMeta.description, ytTags: ytMeta.tags } }];"
+      },
+      "id": "29988a9f-d5c6-4b63-8f53-8ae3348564de",
+      "name": "🎬 Parse YT Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        224
+      ],
+      "notes": "Parsea la respuesta de Gemini para YouTube.\nFallback determinista si la IA falla.\nGarantiza #Shorts en la description."
+    },
+    {
+      "parameters": {
+        "url": "={{ $('📥 Webhook Trigger').item.json.body.videoUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "5b739ee9-1201-4047-8f87-3ce1b6a83e3a",
+      "name": "⬇️ Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        224
+      ],
+      "notes": "Descarga el video como binario para YouTube.\nURL viene del Webhook Trigger."
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('🎬 Parse YT Meta').item.json.ytTitle }}",
+        "regionCode": "CO",
+        "categoryId": "27",
+        "options": {
+          "description": "={{ $('🎬 Parse YT Meta').item.json.ytDescription }}",
+          "notifySubscribers": true,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": false,
+          "tags": "={{ $('🎬 Parse YT Meta').item.json.ytTags }}"
+        }
+      },
+      "id": "700ae305-dbb5-4cd6-b157-d3e0129c9451",
+      "name": "▶️ YouTube Upload",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        224
+      ],
+      "continueOnFail": true,
+      "notes": "✅ Credencial: YouTube API Ciro\nprivacyStatus: private\ncontinueOnFail: TRUE"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst isError = !!(item.json.error || item.json.status === 'failed');\nreturn [{ json: {\n  platform: 'YouTube',\n  status: isError ? 'ERROR' : 'SUCCESS',\n  videoId: isError ? null : (item.json.id || null),\n  errorDetails: isError ? (item.json.error?.message || JSON.stringify(item.json)) : null,\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "54c7024d-c110-46f7-8217-42259d38727c",
+      "name": "✅ YouTube Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const phrase = $('📥 Webhook Trigger').item.json.body.phrase || '';\n\nconst systemPrompt = `Eres un copywriter experto en contenido de alto rendimiento y estoicismo para la marca \"BeBetter Path\" en Instagram. Tu voz es la de un mentor crudo, directo y autoritario que desprecia la comodidad.\n\nSe te dará una frase o concepto. Tu función es generar el copy para la descripción del Reel.\n\nSigue este formato EXACTO:\n\n[Frase corta, máximo 6 palabras, golpe al ego o curiosidad masiva]\n\n[Párrafo 1: El problema. Describe una debilidad común de la sociedad o la trampa de la comodidad, 2-3 líneas]\n\n[Párrafo 2: La verdad. La solución estoica o la realidad cruda que el espectador debe aceptar, 2-3 líneas]\n\n[Párrafo 3: Acción. Un llamado a la disciplina interna y a la ejecución inmediata, 2-3 líneas]\n\n[Parrafo 4: El proceso no se negocia.\n@bebetter.path ⚔️]\n\nREGLAS OBLIGATORIAS:\n- Lenguaje masculino, fuerte y seco.\n- NO incluyas hashtags.\n- NO uses lenguaje motivacional barato o \"mágico\".\n- Prohibidas: increíble, asombroso, mágico, extraordinario, dale like, suscríbete.\n- Permitidas: brutal, crudo, inevitable, deuda, disciplina, proceso, forjar.\n- Solo se permite el emoji de la espada (⚔️) al final.\n- Responde ÚNICAMENTE con el copy resultante.`;\n\nconst requestBody = {\n  system_instruction: { parts: [{ text: systemPrompt }] },\n  contents: [{ role: 'user', parts: [{ text: phrase }] }],\n  generationConfig: { \n    temperature: 0.8,\n    top_p: 0.9\n  }\n};\n\nreturn [{ json: { requestBody: JSON.stringify(requestBody) } }];"
+      },
+      "id": "7786239d-8053-4fdf-9006-d6feceea87aa",
+      "name": "📱 Build IG Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        416
+      ],
+      "notes": "✏️ EDITAR PROMPT AQUÍ: modifica systemPrompt para cambiar el estilo del copy de Instagram.\nCambia 'gemini-2.0-flash' en el nodo siguiente para cambiar el modelo."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyCiFczRUPDnMw3Q9FvlB5knlhAGjsuzQJI",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "358d7bf6-9b5f-4579-af02-55428225056e",
+      "name": "📱 Gemini Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        416
+      ],
+      "continueOnFail": true,
+      "notes": "⚙️ CONFIGURAR: reemplazar REEMPLAZAR_CON_GEMINI_API_KEY en la URL.\n⚙️ CAMBIAR MODELO: editar 'gemini-2.0-flash' en la URL."
+    },
+    {
+      "parameters": {
+        "jsCode": "const caption = $input.item.json.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst phrase = $('📥 Webhook Trigger').item.json.body.phrase || '';\nreturn [{ json: { message1: phrase, message2: caption } }];"
+      },
+      "id": "c61f228c-5e3c-430f-923b-8ca5113a80e6",
+      "name": "📱 Format WhatsApp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        416
+      ],
+      "notes": "Construye el mensaje de WhatsApp:\n- Header con la frase del video\n- Bloque de copy listo para copiar y pegar"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph-video.facebook.com/v19.0/FB_PAGE_ID/video_reels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "upload_phase",
+              "value": "finish"
+            },
+            {
+              "name": "video_state",
+              "value": "PUBLISHED"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b72ba5c-5308-46eb-a27c-6ad8e6150479",
+      "name": "📘 Facebook Reels Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "continueOnFail": true,
+      "notes": "🔌 DESCONECTADO — pendiente activar para Facebook."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { platform: 'Facebook', status: 'PENDING' } }];"
+      },
+      "id": "ce7e8549-8c73-42c4-9807-f2ed310d99f9",
+      "name": "✅ Facebook Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer REEMPLAZAR_CON_TIKTOK_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json; charset=UTF-8",
+        "body": "{}",
+        "options": {}
+      },
+      "id": "936a4738-087f-4684-91ec-c54cb8c38e8c",
+      "name": "🎵 TikTok Direct Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        640
+      ],
+      "continueOnFail": true,
+      "notes": "🔌 DESCONECTADO — pendiente activar para TikTok."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { platform: 'TikTok', status: 'PENDING' } }];"
+      },
+      "id": "fd3ecaf8-f426-4012-bfd9-838c67cded70",
+      "name": "✅ TikTok Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "Ciro",
+        "remoteJid": "573017831245",
+        "messageText": "={{ \"*Reel:* \" + $json.message1 }} ",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        896,
+        416
+      ],
+      "id": "318cb6e4-93de-4189-a097-7b8be0566328",
+      "name": "Enviar texto"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "Ciro",
+        "remoteJid": "573017831245",
+        "messageText": "={{ $('📱 Format WhatsApp').item.json.message2 }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        416
+      ],
+      "id": "28335b00-b8c0-4a4a-908b-d84b5afba2c8",
+      "name": "Enviar texto 2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📥 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📱 Build IG Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🎬 Build YT Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 Build YT Request": {
+      "main": [
+        [
+          {
+            "node": "🎬 Gemini YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 Gemini YouTube": {
+      "main": [
+        [
+          {
+            "node": "🎬 Parse YT Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 Parse YT Meta": {
+      "main": [
+        [
+          {
+            "node": "⬇️ Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⬇️ Download Video": {
+      "main": [
+        [
+          {
+            "node": "▶️ YouTube Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ YouTube Upload": {
+      "main": [
+        [
+          {
+            "node": "✅ YouTube Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Build IG Request": {
+      "main": [
+        [
+          {
+            "node": "📱 Gemini Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Gemini Instagram": {
+      "main": [
+        [
+          {
+            "node": "📱 Format WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Format WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📘 Facebook Reels Upload": {
+      "main": [
+        [
+          {
+            "node": "✅ Facebook Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎵 TikTok Direct Post": {
+      "main": [
+        [
+          {
+            "node": "✅ TikTok Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c65cf81a-220f-4f72-97b4-f9a0cf05a9fa",
+  "meta": {
+    "instanceId": "2e33dfd6f3e254feb36813982fa92cbecc5b145509d336043acaf5e637675b54"
+  },
+  "id": "1jhXFHMuZyMwQn3Z",
+  "tags": []
+}
