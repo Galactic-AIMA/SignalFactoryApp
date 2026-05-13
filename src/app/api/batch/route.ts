@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { renderQueue } from "@/lib/render-queue";
+import { getDb } from "@/lib/db";
+import type { BatchJob } from "@/types";
+
+export async function GET() {
+  const db = getDb();
+  const lastJob = db.prepare(
+    "SELECT * FROM batch_jobs ORDER BY started_at DESC LIMIT 1"
+  ).get() as (Omit<BatchJob, "log"> & { log: string }) | undefined;
+
+  const parsed = lastJob
+    ? { ...lastJob, log: JSON.parse(lastJob.log) as BatchJob["log"] }
+    : null;
+
+  return NextResponse.json({
+    isActive: renderQueue.isActive(),
+    progress: renderQueue.getProgress(),
+    lastJob: parsed,
+  });
+}
 
 export async function DELETE() {
   renderQueue.cancel();

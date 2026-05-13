@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { VideoStyle, TextEffect, RenderProgress } from "@/types";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { CalendarIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import type { VideoStyle, TextEffect, RenderProgress, BatchLogEntry, BatchJob } from "@/types";
 
 const STYLES: VideoStyle[] = ["unified", "serene", "raw", "minimal", "cinematic", "bold"];
 const EFFECTS: TextEffect[] = ["fadeIn", "typewriter", "slideUp", "scaleIn", "glowPulse"];
@@ -18,23 +25,121 @@ interface SavedBatch {
   startDate: string;
 }
 
+// ── Componente: stepper numérico ───────────────────────────────────────────
+function NumberStepper({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 999,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+}) {
+  const clamp = (v: number) => Math.min(max, Math.max(min, v));
+  return (
+    <div>
+      <label className="text-xs text-sf-muted block mb-1">{label}</label>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value - 10))}
+          className="px-2 py-1.5 rounded-md bg-sf-surface border border-sf-border text-xs hover:bg-sf-border/50 transition-colors select-none"
+        >
+          −10
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value - 1))}
+          className="px-2 py-1.5 rounded-md bg-sf-surface border border-sf-border text-xs hover:bg-sf-border/50 transition-colors select-none"
+        >
+          −
+        </button>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(clamp(Number(e.target.value)))}
+          className="bg-sf-bg border border-sf-border rounded-md px-2 py-1.5 text-sm w-16 text-center"
+        />
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value + 1))}
+          className="px-2 py-1.5 rounded-md bg-sf-surface border border-sf-border text-xs hover:bg-sf-border/50 transition-colors select-none"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value + 10))}
+          className="px-2 py-1.5 rounded-md bg-sf-surface border border-sf-border text-xs hover:bg-sf-border/50 transition-colors select-none"
+        >
+          +10
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Componente: feed de log en vivo ────────────────────────────────────────
+function BatchLogFeed({ log }: { log: BatchLogEntry[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [log.length]);
+
+  return (
+    <div className="max-h-52 overflow-y-auto space-y-0.5 font-mono text-[11px] bg-sf-bg rounded-lg p-3 border border-sf-border">
+      {log.length === 0 ? (
+        <p className="text-sf-muted">Iniciando primer número...</p>
+      ) : (
+        log.map((entry, i) => (
+          <div
+            key={i}
+            className={`flex items-start gap-2 leading-relaxed ${
+              entry.status === "done"    ? "text-green-400" :
+              entry.status === "error"   ? "text-red-400"   :
+              entry.status === "running" ? "text-sf-accent"  : "text-sf-muted"
+            }`}
+          >
+            <span className="w-3 flex-shrink-0 mt-px">
+              {entry.status === "done"    ? "✓" :
+               entry.status === "error"   ? "✕" :
+               entry.status === "running" ? "▶" : " "}
+            </span>
+            <span>{entry.msg}</span>
+          </div>
+        ))
+      )}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+// ── Página principal ───────────────────────────────────────────────────────
 export default function BatchPage() {
-  // Restaurar form desde sessionStorage si existe
   const saved: SavedBatch | null = (() => {
     if (typeof window === "undefined") return null;
     try { return JSON.parse(sessionStorage.getItem(SS_KEY) || "null"); } catch { return null; }
   })();
 
-  const [desde,     setDesde]     = useState(saved?.desde     ?? 0);
-  const [hasta,     setHasta]     = useState(saved?.hasta     ?? 9);
+  const [desde,     setDesde]     = useState(saved?.desde  ?? 0);
+  const [hasta,     setHasta]     = useState(saved?.hasta  ?? 9);
   const [idioma,    setIdioma]    = useState<"es" | "en" | "ambos">(saved?.idioma ?? "ambos");
   const [estilo,    setEstilo]    = useState<VideoStyle>(saved?.estilo ?? "unified");
   const [efecto,    setEfecto]    = useState<TextEffect>(saved?.efecto ?? "fadeIn");
-  const [startDate, setStartDate] = useState(saved?.startDate ?? "");
+  const [startDate, setStartDate] = useState<Date | null>(
+    saved?.startDate ? new Date(saved.startDate) : null
+  );
 
   const [progress,     setProgress]     = useState<RenderProgress | null>(null);
+  const [batchLog,     setBatchLog]     = useState<BatchLogEntry[]>([]);
   const [running,      setRunning]      = useState(false);
-  const [initializing, setInitializing] = useState(true); // true hasta primer mensaje SSE
+  const [initializing, setInitializing] = useState(true);
   const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
   const [eta,          setEta]          = useState<string | null>(null);
 
@@ -43,31 +148,30 @@ export default function BatchPage() {
 
   function persistFormState(overrides: Partial<SavedBatch> = {}) {
     const state: SavedBatch = {
-      desde, hasta, idioma, estilo, efecto, startDate, ...overrides,
+      desde, hasta, idioma, estilo, efecto,
+      startDate: startDate ? format(startDate, "yyyy-MM-dd") : "",
+      ...overrides,
     };
     sessionStorage.setItem(SS_KEY, JSON.stringify(state));
   }
 
   function connectSSE() {
     if (eventSourceRef.current) eventSourceRef.current.close();
-    const es = new EventSource("/api/render/progress");
+    const evtSrc = new EventSource("/api/render/progress");
 
-    es.onmessage = (event) => {
+    evtSrc.onmessage = (event) => {
       const data = JSON.parse(event.data) as RenderProgress;
       setProgress(data);
+      if (data.log) setBatchLog(data.log);
       setInitializing(false);
 
       if (data.status === "rendering") {
         setRunning(true);
-
-        // Restaurar startTime desde sessionStorage si no lo tenemos en memoria
         if (!startTimeRef.current) {
           const stored = sessionStorage.getItem(SS_START);
           startTimeRef.current = stored ? parseInt(stored) : Date.now();
           if (!stored) sessionStorage.setItem(SS_START, String(startTimeRef.current));
         }
-
-        // Calcular ETA
         if (data.completado > 0 && startTimeRef.current) {
           const elapsed      = (Date.now() - startTimeRef.current) / 1000;
           const secPerNumber = elapsed / data.completado;
@@ -86,29 +190,73 @@ export default function BatchPage() {
       }
     };
 
-    es.onerror = () => setInitializing(false);
-    eventSourceRef.current = es;
+    evtSrc.onerror = () => setInitializing(false);
+    eventSourceRef.current = evtSrc;
   }
 
-  // Conectar SSE al montar y recuperar estado si hay lote activo
+  // Al montar: recuperar estado desde DB + conectar SSE
   useEffect(() => {
+    fetch("/api/batch")
+      .then((r) => r.json())
+      .then(({ isActive, progress: prog, lastJob }: { isActive: boolean; progress: RenderProgress; lastJob: BatchJob | null }) => {
+        if (isActive && prog.status === "rendering") {
+          setProgress(prog);
+          setRunning(true);
+          if (prog.log) setBatchLog(prog.log);
+          if (lastJob) {
+            setDesde(lastJob.desde);
+            setHasta(lastJob.hasta);
+            setIdioma(lastJob.idioma as "es" | "en" | "ambos");
+            if (lastJob.start_date) setStartDate(new Date(lastJob.start_date));
+          }
+        } else if (lastJob) {
+          setBatchLog(lastJob.log);
+          setProgress({
+            total: lastJob.total,
+            completado: lastJob.completado,
+            actual: lastJob.hasta,
+            status: lastJob.status === "done" ? "done" : lastJob.status === "error" ? "error" : "idle",
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setInitializing(false));
+
+    // Default inteligente: empezar desde el último número renderizado + 1
+    if (!saved) {
+      fetch("/api/numbers/last-rendered")
+        .then((r) => r.json())
+        .then(({ last }: { last: number | null }) => {
+          if (last !== null) {
+            setDesde(last + 1);
+            setHasta(Math.min(999, last + 10));
+          }
+        })
+        .catch(() => {});
+    }
+
     connectSSE();
     return () => eventSourceRef.current?.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleStart() {
     setErrorMsg(null);
+    const startDateStr = startDate ? format(startDate, "yyyy-MM-dd") : undefined;
     const res = await fetch("/api/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ desde, hasta, idioma, estilo, efecto, ...(startDate ? { startDate } : {}) }),
+      body: JSON.stringify({
+        desde, hasta, idioma, estilo, efecto,
+        ...(startDateStr ? { startDate: startDateStr } : {}),
+      }),
     });
     const data = await res.json();
     if (!data.ok) {
       setErrorMsg(data.error);
       return;
     }
-    // Persistir en sessionStorage para sobrevivir navegación
+    setBatchLog([]);
     persistFormState();
     sessionStorage.setItem(SS_START, String(Date.now()));
     startTimeRef.current = Date.now();
@@ -126,107 +274,119 @@ export default function BatchPage() {
     : 0;
 
   const totalVideos = idioma === "ambos" ? (hasta - desde + 1) * 2 : hasta - desde + 1;
+  const startDateStr = startDate ? format(startDate, "yyyy-MM-dd") : undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-bold font-display">Renderizado por Lotes</h1>
-        <p className="text-sf-muted text-sm mt-1">Renderiza un rango de números angelicales</p>
+        <p className="text-sf-muted text-sm mt-1">Genera un rango de números angelicales y prográmalos en YouTube</p>
       </div>
 
       {/* Formulario */}
-      <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-4">
-        <div className="flex gap-4 items-end flex-wrap">
-          <div>
-            <label className="text-xs text-sf-muted block mb-1">Desde</label>
-            <input
-              type="number" min={0} max={999} value={desde}
-              onChange={(e) => setDesde(Number(e.target.value))}
-              className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm w-24"
-            />
+      <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-5">
+
+        {/* Fila 1: Desde / Hasta */}
+        <div className="flex gap-6 flex-wrap">
+          <NumberStepper label="Desde" value={desde} onChange={(v) => setDesde(Math.min(v, hasta))} />
+          <NumberStepper label="Hasta" value={hasta} onChange={(v) => setHasta(Math.max(v, desde))} />
+          <div className="flex items-end">
+            <p className="text-xs text-sf-muted pb-2">
+              <span className="text-sf-text font-semibold">{hasta - desde + 1}</span> números ·{" "}
+              <span className="text-sf-text font-semibold">{totalVideos}</span> videos
+            </p>
           </div>
-          <div>
-            <label className="text-xs text-sf-muted block mb-1">Hasta</label>
-            <input
-              type="number" min={0} max={999} value={hasta}
-              onChange={(e) => setHasta(Number(e.target.value))}
-              className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm w-24"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-sf-muted block mb-1">Idioma</label>
-            <select value={idioma} onChange={(e) => setIdioma(e.target.value as "es" | "en" | "ambos")}
-              className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm">
-              <option value="ambos">🌐 ES + EN</option>
-              <option value="es">🇪🇸 Solo ES</option>
-              <option value="en">🇺🇸 Solo EN</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-sf-muted block mb-1">Estilo</label>
-            <select value={estilo} onChange={(e) => setEstilo(e.target.value as VideoStyle)}
-              className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm">
-              {STYLES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-sf-muted block mb-1">Efecto</label>
-            <select value={efecto} onChange={(e) => setEfecto(e.target.value as TextEffect)}
-              className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm">
-              {EFFECTS.map((e) => <option key={e} value={e}>{e}</option>)}
-            </select>
-          </div>
-          <button
-            onClick={handleStart}
-            disabled={running}
-            className="bg-sf-accent text-sf-bg px-6 py-2 rounded-lg font-bold hover:bg-sf-accent/80 disabled:opacity-50 transition-colors"
-          >
-            {running ? "En progreso..." : "Iniciar Lote"}
-          </button>
-          {running && (
-            <button
-              onClick={handleCancel}
-              className="px-4 py-2 rounded-lg border border-red-500/50 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
-            >
-              Cancelar
-            </button>
-          )}
         </div>
 
-        {/* Programación de publicación */}
-        <div className="pt-3 border-t border-sf-border w-full">
-          <div className="flex items-end gap-4 flex-wrap">
-            <div>
-              <label className="text-xs text-sf-muted block mb-1">
-                Publicar desde <span className="opacity-60">(opcional)</span>
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                min={new Date().toISOString().split("T")[0]}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm"
-              />
-            </div>
+        {/* Fila 2: Idioma / Estilo / Efecto */}
+        <div className="flex gap-3 flex-wrap items-end">
+          <div>
+            <label className="text-xs text-sf-muted block mb-1">Idioma</label>
+            <Select value={idioma} onValueChange={(v) => setIdioma(v as typeof idioma)}>
+              <SelectTrigger className="bg-sf-bg border-sf-border text-sf-text w-36 h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-sf-surface border-sf-border text-sf-text">
+                <SelectItem value="ambos">🌐 ES + EN</SelectItem>
+                <SelectItem value="es">🇪🇸 Solo ES</SelectItem>
+                <SelectItem value="en">🇺🇸 Solo EN</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <label className="text-xs text-sf-muted block mb-1">Estilo</label>
+            <Select value={estilo} onValueChange={(v) => setEstilo(v as VideoStyle)}>
+              <SelectTrigger className="bg-sf-bg border-sf-border text-sf-text w-32 h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-sf-surface border-sf-border text-sf-text">
+                {STYLES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <label className="text-xs text-sf-muted block mb-1">Efecto</label>
+            <Select value={efecto} onValueChange={(v) => setEfecto(v as TextEffect)}>
+              <SelectTrigger className="bg-sf-bg border-sf-border text-sf-text w-36 h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-sf-surface border-sf-border text-sf-text">
+                {EFFECTS.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Fila 3: Publicar desde (date picker) */}
+        <div className="pt-3 border-t border-sf-border">
+          <label className="text-xs text-sf-muted block mb-2">
+            Publicar desde <span className="opacity-60">(opcional · 8:00 AM Bogotá)</span>
+          </label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="bg-sf-bg border-sf-border text-sf-text hover:bg-sf-surface hover:text-sf-text h-9 text-sm gap-2"
+                >
+                  <CalendarIcon className="w-4 h-4 text-sf-muted" />
+                  {startDate
+                    ? format(startDate, "d 'de' MMM yyyy", { locale: es })
+                    : "Seleccionar fecha"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 bg-sf-surface border-sf-border" align="start">
+                <Calendar
+                  mode="single"
+                  selected={startDate ?? undefined}
+                  onSelect={(d) => setStartDate(d ?? null)}
+                  disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                  locale={es}
+                />
+              </PopoverContent>
+            </Popover>
             {startDate && (
               <button
                 type="button"
-                onClick={() => setStartDate("")}
-                className="text-xs text-sf-muted hover:text-red-400 transition-colors mb-2"
+                onClick={() => setStartDate(null)}
+                className="text-xs text-sf-muted hover:text-red-400 transition-colors"
               >
-                Limpiar
+                Limpiar fecha
               </button>
             )}
           </div>
 
+          {/* Calendario calculado */}
           {startDate && (
             <div className="mt-3 p-3 bg-sf-bg rounded-lg border border-sf-border">
-              <p className="text-xs font-semibold text-sf-muted mb-2">
-                Calendario · 8:00 AM Bogotá
+              <p className="text-[10px] font-semibold text-sf-muted mb-2 uppercase tracking-wide">
+                Calendario de publicación
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {Array.from({ length: Math.min(hasta - desde + 1, 12) }, (_, i) => {
-                  const d = new Date(`${startDate}T13:00:00.000Z`);
+                  const d = new Date(`${startDateStr}T13:00:00.000Z`);
                   d.setUTCDate(d.getUTCDate() + i);
                   const label = d.toLocaleDateString("es-CO", {
                     day: "numeric", month: "short", timeZone: "America/Bogota",
@@ -248,18 +408,33 @@ export default function BatchPage() {
           )}
         </div>
 
+        {/* Fila 4: Botones de acción */}
+        <div className="flex gap-3 items-center pt-1">
+          <button
+            onClick={handleStart}
+            disabled={running}
+            className="bg-sf-accent text-sf-bg px-6 py-2 rounded-lg font-bold hover:bg-sf-accent/80 disabled:opacity-50 transition-colors text-sm"
+          >
+            {running ? "En progreso..." : "Iniciar Lote"}
+          </button>
+          {running && (
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2 rounded-lg border border-red-500/50 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
+            >
+              Cancelar
+            </button>
+          )}
+        </div>
+
         {errorMsg && (
           <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2">
             ⚠️ {errorMsg}
           </p>
         )}
-
-        <p className="text-xs text-sf-muted">
-          Total: {hasta - desde + 1} números × {idioma === "ambos" ? "2 idiomas" : idioma.toUpperCase()} = {totalVideos} videos
-        </p>
       </div>
 
-      {/* Progreso — skeleton mientras inicializa, luego estado real */}
+      {/* Progreso — skeleton mientras inicializa */}
       {initializing ? (
         <div className="bg-sf-surface border border-sf-border rounded-xl p-6">
           <div className="flex items-center gap-2 text-sf-muted text-sm">
@@ -268,42 +443,57 @@ export default function BatchPage() {
           </div>
         </div>
       ) : progress && progress.status !== "idle" && (
-        <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-3">
-          <div className="flex justify-between text-sm">
-            <span className="font-medium">
-              {progress.completado}/{progress.total} números
-            </span>
-            <div className="flex items-center gap-3">
+        <div className="bg-sf-surface border border-sf-border rounded-xl p-6 space-y-4">
+
+          {/* Cabecera: estado + ETA */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold">
+                {progress.desde !== undefined
+                  ? `Lote ${progress.desde}–${progress.hasta} · ${progress.idioma === "ambos" ? "ES + EN" : (progress.idioma ?? "").toUpperCase()}`
+                  : "Procesando lote"}
+                {progress.startDate && (
+                  <span className="ml-2 text-xs font-normal text-sf-muted">
+                    · Publica desde {progress.startDate}
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-sf-muted">
+                {progress.completado}/{progress.total} números completados
+              </p>
+            </div>
+            <div className="text-right space-y-0.5">
               {eta && progress.status === "rendering" && (
-                <span className="text-sf-muted text-xs">{eta} restantes</span>
+                <p className="text-xs text-sf-muted">{eta} restantes</p>
               )}
-              <span className={
+              <span className={`text-sm font-medium ${
                 progress.status === "done"  ? "text-green-400" :
                 progress.status === "error" ? "text-red-400"   : "text-sf-accent"
-              }>
+              }`}>
                 {progress.status === "rendering"
-                  ? `Renderizando #${progress.actual}...`
+                  ? `▶ Número #${progress.actual}`
                   : progress.status === "done"
                     ? "✅ Completado"
-                    : "❌ Error"}
+                    : "❌ Error / Cancelado"}
               </span>
             </div>
           </div>
 
-          <div className="w-full bg-sf-bg rounded-full h-3 overflow-hidden">
+          {/* Barra de progreso */}
+          <div className="w-full bg-sf-bg rounded-full h-2.5 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-sf-primary to-sf-accent rounded-full transition-all duration-300"
+              className="h-full bg-gradient-to-r from-sf-primary to-sf-accent rounded-full transition-all duration-500"
               style={{ width: `${pct}%` }}
             />
           </div>
+          <p className="text-xs text-sf-muted text-right -mt-2">{pct}%</p>
 
-          <div className="flex justify-between text-xs text-sf-muted">
-            <span>
-              {progress.status === "rendering" && saved
-                ? `Lote ${saved.desde}–${saved.hasta} · ${saved.idioma === "ambos" ? "ES + EN" : saved.idioma.toUpperCase()}`
-                : ""}
-            </span>
-            <span>{pct}%</span>
+          {/* Log en vivo */}
+          <div>
+            <p className="text-[10px] text-sf-muted uppercase tracking-wide mb-1.5 font-semibold">
+              Log en vivo
+            </p>
+            <BatchLogFeed log={batchLog} />
           </div>
         </div>
       )}

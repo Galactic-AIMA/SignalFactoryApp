@@ -81,4 +81,22 @@ export function initSchema(db: Database.Database): void {
   } catch {
     // Columna ya existe — ignorar
   }
+
+  // Tabla de jobs de batch para persistencia robusta
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS batch_jobs (
+      id TEXT PRIMARY KEY,
+      desde INTEGER NOT NULL,
+      hasta INTEGER NOT NULL,
+      idioma TEXT NOT NULL,
+      start_date TEXT,
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running','done','error','cancelled')),
+      total INTEGER NOT NULL,
+      completado INTEGER NOT NULL DEFAULT 0,
+      log TEXT NOT NULL DEFAULT '[]',
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      finished_at DATETIME
+    )
+  `);
 }

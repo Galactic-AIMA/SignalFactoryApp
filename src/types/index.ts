@@ -175,10 +175,39 @@ export interface BatchRequest {
   startDate?: string;
 }
 
+export interface BatchLogEntry {
+  n: number;
+  idioma: "es" | "en" | "ambos";
+  fase: "render" | "webhook";
+  status: "running" | "done" | "error";
+  msg: string;
+  ts: string;
+}
+
+export interface BatchJob {
+  id: string;
+  desde: number;
+  hasta: number;
+  idioma: string;
+  start_date: string | null;
+  status: "running" | "done" | "error" | "cancelled";
+  total: number;
+  completado: number;
+  log: BatchLogEntry[];
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface RenderProgress {
   total: number;
   completado: number;
   actual: number;
   status: "idle" | "rendering" | "done" | "error";
   mensaje?: string;
+  batchId?: string;
+  desde?: number;
+  hasta?: number;
+  idioma?: string;
+  startDate?: string;
+  log?: BatchLogEntry[];
 }

@@ -3,7 +3,8 @@ import { renderAngelNumber, renderAngelNumberDual, type RenderOptions } from "./
 import { sendWebhook } from "./webhook";
 import { log, generateReport } from "./logger";
 import { calculatePublishAt } from "./utils";
-import type { RenderProgress } from "@/types";
+import { getDb } from "./db";
+import type { RenderProgress, BatchLogEntry } from "@/types";
 
 export type BatchIdioma = "es" | "en" | "ambos";
 
@@ -20,9 +21,10 @@ class RenderQueue extends EventEmitter {
     actual: 0,
     status: "idle",
   };
+  private currentLog: BatchLogEntry[] = [];
 
   getProgress(): RenderProgress {
-    return { ...this.currentProgress };
+    return { ...this.currentProgress, log: [...this.currentLog] };
   }
 
   isActive(): boolean {
@@ -33,7 +35,7 @@ class RenderQueue extends EventEmitter {
     if (this.isRunning) {
       this.isRunning = false;
       this.currentProgress.status = "error";
-      this.emit("progress", { ...this.currentProgress });
+      this.emit("progress", { ...this.currentProgress, log: this.currentLog });
       log("batch", "Lote cancelado por el usuario");
     }
   }
@@ -50,41 +52,111 @@ class RenderQueue extends EventEmitter {
     const total = hasta - desde + 1;
     const batchId = `batch-${desde}-${hasta}-${Date.now()}`;
 
-    this.currentProgress = { total, completado: 0, actual: desde, status: "rendering" };
-    this.emit("progress", this.currentProgress);
+    this.currentLog = [];
+    this.currentProgress = {
+      total,
+      completado: 0,
+      actual: desde,
+      status: "rendering",
+      batchId,
+      desde,
+      hasta,
+      idioma,
+      startDate,
+    };
 
+    // Guardar job en DB
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO batch_jobs (id, desde, hasta, idioma, start_date, status, total, completado, log)
+      VALUES (?, ?, ?, ?, ?, 'running', ?, 0, '[]')
+    `).run(batchId, desde, hasta, idioma, startDate ?? null, total);
+
+    this.emit("progress", { ...this.currentProgress, log: this.currentLog });
     log("batch", `Iniciando lote ${desde}-${hasta} (${total} números, idioma: ${idioma})`, { batchId });
 
+    const addLog = (entry: BatchLogEntry) => {
+      this.currentLog.push(entry);
+      // Actualizar log en DB
+      const job = db.prepare("SELECT log FROM batch_jobs WHERE id = ?").get(batchId) as { log: string } | undefined;
+      if (job) {
+        const existing: BatchLogEntry[] = JSON.parse(job.log);
+        existing.push(entry);
+        db.prepare("UPDATE batch_jobs SET log = ? WHERE id = ?")
+          .run(JSON.stringify(existing), batchId);
+      }
+    };
+
+    const emitProgress = () => {
+      this.emit("progress", { ...this.currentProgress, log: [...this.currentLog] });
+    };
+
+    const mkEntry = (
+      n: number,
+      idiomaEntry: BatchLogEntry["idioma"],
+      fase: BatchLogEntry["fase"],
+      status: BatchLogEntry["status"],
+      msg: string
+    ): BatchLogEntry => ({ n, idioma: idiomaEntry, fase, status, msg, ts: new Date().toISOString() });
+
     for (let n = desde; n <= hasta; n++) {
+      if (!this.isRunning) break;
+
       this.currentProgress.actual = n;
-      this.emit("progress", { ...this.currentProgress });
+      emitProgress();
 
       const index = n - desde;
       const scheduledAt = startDate ? calculatePublishAt(startDate, index) : undefined;
 
       try {
         if (idioma === "ambos") {
-          await renderAngelNumberDual(n, { ...renderOpts, scheduledAt });
+          addLog(mkEntry(n, "es", "render", "running", `#${n} ES → Renderizando...`));
+          emitProgress();
+          await renderAngelNumber(n, "es", { ...renderOpts, scheduledAt });
+          addLog(mkEntry(n, "es", "render", "done", `#${n} ES → Renderizado ✓`));
+          emitProgress();
+
+          addLog(mkEntry(n, "en", "render", "running", `#${n} EN → Renderizando...`));
+          emitProgress();
+          await renderAngelNumber(n, "en", { ...renderOpts, scheduledAt });
+          addLog(mkEntry(n, "en", "render", "done", `#${n} EN → Renderizado ✓`));
+          emitProgress();
         } else {
-          await renderAngelNumber(n, idioma, { ...renderOpts, scheduledAt });
+          addLog(mkEntry(n, idioma as "es" | "en", "render", "running", `#${n} ${idioma.toUpperCase()} → Renderizando...`));
+          emitProgress();
+          await renderAngelNumber(n, idioma as "es" | "en", { ...renderOpts, scheduledAt });
+          addLog(mkEntry(n, idioma as "es" | "en", "render", "done", `#${n} ${idioma.toUpperCase()} → Renderizado ✓`));
+          emitProgress();
         }
+
+        addLog(mkEntry(n, "ambos", "webhook", "running", `#${n} → Enviando a n8n...`));
+        emitProgress();
         await sendWebhook(n, batchId, scheduledAt);
+        addLog(mkEntry(n, "ambos", "webhook", "done", `#${n} → Webhook enviado ✓`));
+
         this.currentProgress.completado++;
+        db.prepare("UPDATE batch_jobs SET completado = ? WHERE id = ?")
+          .run(this.currentProgress.completado, batchId);
+        emitProgress();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        addLog(mkEntry(n, "ambos", "render", "error", `#${n} → Error: ${msg}`));
+        emitProgress();
         log("error", `Error en número ${n}: ${msg}`, { angelNumber: n, batchId });
       }
-
-      this.emit("progress", { ...this.currentProgress });
     }
 
-    this.currentProgress.status = "done";
-    this.emit("progress", { ...this.currentProgress });
+    this.currentProgress.status = this.isRunning ? "done" : "error";
+    this.isRunning = false;
+
+    // Actualizar estado final en DB
+    db.prepare("UPDATE batch_jobs SET status = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(this.currentProgress.status, batchId);
+
+    emitProgress();
 
     const report = generateReport(batchId, desde, hasta);
     log("batch", report, { batchId });
-
-    this.isRunning = false;
   }
 }
 
