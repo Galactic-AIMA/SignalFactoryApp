@@ -145,6 +145,7 @@ export default function BatchPage() {
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const startTimeRef   = useRef<number | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function persistFormState(overrides: Partial<SavedBatch> = {}) {
     const state: SavedBatch = {
@@ -155,39 +156,70 @@ export default function BatchPage() {
     sessionStorage.setItem(SS_KEY, JSON.stringify(state));
   }
 
+  function applyProgress(data: RenderProgress) {
+    setProgress(data);
+    if (data.log) setBatchLog(data.log);
+
+    if (data.status === "rendering") {
+      setRunning(true);
+      if (!startTimeRef.current) {
+        const stored = sessionStorage.getItem(SS_START);
+        startTimeRef.current = stored ? parseInt(stored) : Date.now();
+        if (!stored) sessionStorage.setItem(SS_START, String(startTimeRef.current));
+      }
+      if (data.completado > 0 && startTimeRef.current) {
+        const elapsed      = (Date.now() - startTimeRef.current) / 1000;
+        const secPerNumber = elapsed / data.completado;
+        const remaining    = (data.total - data.completado) * secPerNumber;
+        const mins         = Math.round(remaining / 60);
+        setEta(mins <= 1 ? "~1 min" : `~${mins} min`);
+      }
+    }
+
+    if (data.status === "done" || data.status === "error") {
+      setRunning(false);
+      setEta(null);
+      startTimeRef.current = null;
+      sessionStorage.removeItem(SS_START);
+      sessionStorage.removeItem(SS_KEY);
+      stopPolling();
+    }
+  }
+
+  function startPolling() {
+    if (pollIntervalRef.current) return;
+    pollIntervalRef.current = setInterval(() => {
+      fetch("/api/batch")
+        .then((r) => r.json())
+        .then(({ isActive, progress: prog }: { isActive: boolean; progress: RenderProgress; lastJob: BatchJob | null }) => {
+          if (isActive && prog.status === "rendering") {
+            applyProgress(prog);
+          } else if (!isActive && prog.status !== "rendering") {
+            // El render terminó — actualizar y detener polling
+            applyProgress(prog);
+          }
+        })
+        .catch(() => {});
+    }, 3000);
+  }
+
+  function stopPolling() {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }
+
   function connectSSE() {
     if (eventSourceRef.current) eventSourceRef.current.close();
     const evtSrc = new EventSource("/api/render/progress");
 
     evtSrc.onmessage = (event) => {
       const data = JSON.parse(event.data) as RenderProgress;
-      setProgress(data);
-      if (data.log) setBatchLog(data.log);
       setInitializing(false);
-
-      if (data.status === "rendering") {
-        setRunning(true);
-        if (!startTimeRef.current) {
-          const stored = sessionStorage.getItem(SS_START);
-          startTimeRef.current = stored ? parseInt(stored) : Date.now();
-          if (!stored) sessionStorage.setItem(SS_START, String(startTimeRef.current));
-        }
-        if (data.completado > 0 && startTimeRef.current) {
-          const elapsed      = (Date.now() - startTimeRef.current) / 1000;
-          const secPerNumber = elapsed / data.completado;
-          const remaining    = (data.total - data.completado) * secPerNumber;
-          const mins         = Math.round(remaining / 60);
-          setEta(mins <= 1 ? "~1 min" : `~${mins} min`);
-        }
-      }
-
-      if (data.status === "done" || data.status === "error") {
-        setRunning(false);
-        setEta(null);
-        startTimeRef.current = null;
-        sessionStorage.removeItem(SS_START);
-        sessionStorage.removeItem(SS_KEY);
-      }
+      applyProgress(data);
+      // SSE activo y funcionando: no necesitamos polling
+      if (data.status === "rendering") stopPolling();
     };
 
     evtSrc.onerror = () => setInitializing(false);
@@ -209,6 +241,8 @@ export default function BatchPage() {
             setIdioma(lastJob.idioma as "es" | "en" | "ambos");
             if (lastJob.start_date) setStartDate(new Date(lastJob.start_date));
           }
+          // Arrancar polling como fallback mientras SSE no confirme
+          startPolling();
         } else if (lastJob) {
           setBatchLog(lastJob.log);
           setProgress({
@@ -236,7 +270,10 @@ export default function BatchPage() {
     }
 
     connectSSE();
-    return () => eventSourceRef.current?.close();
+    return () => {
+      eventSourceRef.current?.close();
+      stopPolling();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -263,6 +300,7 @@ export default function BatchPage() {
     setRunning(true);
     setEta(null);
     connectSSE();
+    startPolling();
   }
 
   async function handleCancel() {

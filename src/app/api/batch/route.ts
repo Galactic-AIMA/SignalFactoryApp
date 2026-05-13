@@ -2,10 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { renderQueue } from "@/lib/render-queue";
 import { getDb } from "@/lib/db";
-import type { BatchJob } from "@/types";
+import type { BatchJob, RenderProgress } from "@/types";
 
 export async function GET() {
   const db = getDb();
+
+  // Detectar lote activo desde DB (sobrevive hot-reload del servidor)
+  const runningJob = db.prepare(
+    "SELECT * FROM batch_jobs WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+  ).get() as (Omit<BatchJob, "log"> & { log: string }) | undefined;
+
+  const isActiveFromDB = !!runningJob;
+  const memProgress = renderQueue.getProgress();
+
+  // Si la memoria dice "rendering" usar eso; si no, reconstruir desde DB
+  const progress: RenderProgress = memProgress.status === "rendering"
+    ? memProgress
+    : runningJob
+      ? {
+          total: runningJob.total,
+          completado: runningJob.completado,
+          actual: runningJob.hasta,
+          status: "rendering" as const,
+          batchId: runningJob.id,
+          desde: runningJob.desde,
+          hasta: runningJob.hasta,
+          idioma: runningJob.idioma,
+          startDate: runningJob.start_date ?? undefined,
+          log: JSON.parse(runningJob.log) as BatchJob["log"],
+        }
+      : memProgress;
+
   const lastJob = db.prepare(
     "SELECT * FROM batch_jobs ORDER BY started_at DESC LIMIT 1"
   ).get() as (Omit<BatchJob, "log"> & { log: string }) | undefined;
@@ -15,8 +42,8 @@ export async function GET() {
     : null;
 
   return NextResponse.json({
-    isActive: renderQueue.isActive(),
-    progress: renderQueue.getProgress(),
+    isActive: isActiveFromDB || renderQueue.isActive(),
+    progress,
     lastJob: parsed,
   });
 }
