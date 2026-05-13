@@ -17,3 +17,13 @@ export function padNumber(n: number): string {
 export function formatOutputPath(numero: number, idioma: "es" | "en"): string {
   return `output/${idioma}/${padNumber(numero)}-${idioma}.mp4`;
 }
+
+/**
+ * Calcula el publishAt para el número en posición `index` del lote.
+ * Hora fija: 13:00 UTC = 8:00 AM Bogotá (UTC-5).
+ */
+export function calculatePublishAt(startDate: string, index: number): string {
+  const date = new Date(`${startDate}T13:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + index);
+  return date.toISOString();
+}

@@ -62,6 +62,12 @@ interface RenderState {
   progress: number;
 }
 
+interface WebhookTestState {
+  status: "idle" | "sending" | "ok" | "error";
+  mensaje: string;
+  detalle: string;
+}
+
 const IDLE_STATE: RenderState = { status: "idle", mensaje: "", progress: 0 };
 
 function RenderProgressBar({ state }: { state: RenderState }) {
@@ -92,6 +98,10 @@ function RenderProgressBar({ state }: { state: RenderState }) {
 
 type Canal = "es" | "en";
 
+interface AngelNumberWithSchedule extends AngelNumber {
+  scheduled_at: string | null;
+}
+
 interface ChannelSelection {
   bgId: number | null;
   bgPath: string | null;
@@ -101,8 +111,8 @@ interface ChannelSelection {
 const EMPTY_SELECTION: ChannelSelection = { bgId: null, bgPath: null, audioId: null };
 
 export default function EditorPage() {
-  const [numbers, setNumbers]         = useState<AngelNumber[]>([]);
-  const [selected, setSelected]       = useState<AngelNumber | null>(null);
+  const [numbers, setNumbers]         = useState<AngelNumberWithSchedule[]>([]);
+  const [selected, setSelected]       = useState<AngelNumberWithSchedule | null>(null);
   const [estilo, setEstilo]           = useState<VideoStyle>("unified");
   const [efecto, setEfecto]           = useState<TextEffect>("fadeIn");
   const [selEs, setSelEs]             = useState<ChannelSelection>(EMPTY_SELECTION);
@@ -110,6 +120,8 @@ export default function EditorPage() {
   const [activeCanal, setActiveCanal] = useState<Canal>("es");
   const [renderStateEs, setRenderStateEs] = useState<RenderState>(IDLE_STATE);
   const [renderStateEn, setRenderStateEn] = useState<RenderState>(IDLE_STATE);
+  const [webhookTest, setWebhookTest]     = useState<WebhookTestState>({ status: "idle", mensaje: "", detalle: "" });
+  const [webhookTestDate, setWebhookTestDate] = useState("");
 
   const progressEsRef  = useRef<NodeJS.Timeout | null>(null);
   const progressEnRef  = useRef<NodeJS.Timeout | null>(null);
@@ -134,7 +146,7 @@ export default function EditorPage() {
     } catch {}
   }
 
-  function handleSelectNumber(num: AngelNumber) {
+  function handleSelectNumber(num: AngelNumberWithSchedule) {
     setSelected(num);
     setSelEs(EMPTY_SELECTION);
     setSelEn(EMPTY_SELECTION);
@@ -245,6 +257,38 @@ export default function EditorPage() {
     await loadNumbers();
   }
 
+  async function handleWebhookTest() {
+    if (!selected) return;
+    setWebhookTest({ status: "sending", mensaje: "Enviando webhook de prueba...", detalle: "" });
+    try {
+      const res = await fetch("/api/webhook/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          angelNumber: selected.id,
+          ...(webhookTestDate ? { publishAt: new Date(`${webhookTestDate}T13:00:00.000Z`).toISOString() } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setWebhookTest({
+          status: "ok",
+          mensaje: `✅ n8n respondió HTTP ${data.status}`,
+          detalle: data.respuestaN8n ?? "",
+        });
+      } else {
+        setWebhookTest({
+          status: "error",
+          mensaje: `❌ ${data.error ?? `HTTP ${data.status}`}`,
+          detalle: data.respuestaN8n ?? "",
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setWebhookTest({ status: "error", mensaje: `❌ ${msg}`, detalle: "" });
+    }
+  }
+
   const texto = selected ? { es: selected.texto_es, en: selected.texto_en } : null;
 
   return (
@@ -273,7 +317,9 @@ export default function EditorPage() {
                   key={i}
                   onClick={() => num && handleSelectNumber(num)}
                   disabled={!num}
-                  title={num ? `${i} — ${num.grupo_nombre} — ${estado}` : `${i} (sin datos)`}
+                  title={num
+                    ? `${i} — ${num.grupo_nombre} — ${estado}${num.scheduled_at ? ` · Publica ${new Date(num.scheduled_at).toLocaleDateString("es-CO", { day: "numeric", month: "short", timeZone: "America/Bogota" })}` : ""}`
+                    : `${i} (sin datos)`}
                   className={`relative aspect-square rounded-md border-2 text-[11px] font-bold transition-all
                     ${bg} ${border}
                     ${isSelected ? "ring-2 ring-sf-primary scale-110 z-10" : ""}
@@ -523,6 +569,69 @@ export default function EditorPage() {
                 {isRendering ? "Renderizando..." : "Renderizar ES + EN"}
               </button>
             </div>
+
+            {/* Panel de prueba de webhook */}
+            {selected.estado !== "pendiente" && (
+              <div className="pt-4 border-t border-sf-border space-y-3">
+                <p className="text-xs font-semibold text-sf-muted">
+                  Prueba de webhook → n8n
+                  <span className="ml-2 font-normal opacity-60">Sin cambios en DB</span>
+                </p>
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div>
+                    <label className="text-[10px] text-sf-muted block mb-1">
+                      publishAt <span className="opacity-60">(opcional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={webhookTestDate}
+                      min={new Date().toISOString().split("T")[0]}
+                      onChange={(e) => setWebhookTestDate(e.target.value)}
+                      className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-xs"
+                    />
+                  </div>
+                  <button
+                    onClick={handleWebhookTest}
+                    disabled={webhookTest.status === "sending"}
+                    className="px-4 py-2 rounded-lg border border-sf-border text-sf-text text-sm hover:bg-sf-surface disabled:opacity-50 transition-colors"
+                  >
+                    {webhookTest.status === "sending" ? "Enviando..." : "Probar webhook"}
+                  </button>
+                  {webhookTest.status !== "idle" && webhookTest.status !== "sending" && (
+                    <button
+                      onClick={() => setWebhookTest({ status: "idle", mensaje: "", detalle: "" })}
+                      className="text-[10px] text-sf-muted hover:text-sf-text transition-colors"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+
+                {webhookTest.status !== "idle" && (
+                  <div className={`rounded-lg border p-3 text-xs space-y-1.5 ${
+                    webhookTest.status === "ok"
+                      ? "border-green-500/30 bg-green-500/5"
+                      : webhookTest.status === "error"
+                        ? "border-red-500/30 bg-red-500/5"
+                        : "border-sf-border bg-sf-bg"
+                  }`}>
+                    <p className={
+                      webhookTest.status === "ok" ? "text-green-400" :
+                      webhookTest.status === "error" ? "text-red-400" : "text-sf-muted"
+                    }>
+                      {webhookTest.mensaje}
+                    </p>
+                    {webhookTest.detalle && (
+                      <p className="text-sf-muted font-mono break-all opacity-70">
+                        {webhookTest.detalle.length > 300
+                          ? webhookTest.detalle.slice(0, 300) + "…"
+                          : webhookTest.detalle}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

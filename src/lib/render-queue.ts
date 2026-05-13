@@ -2,12 +2,14 @@ import { EventEmitter } from "events";
 import { renderAngelNumber, renderAngelNumberDual, type RenderOptions } from "./render";
 import { sendWebhook } from "./webhook";
 import { log, generateReport } from "./logger";
+import { calculatePublishAt } from "./utils";
 import type { RenderProgress } from "@/types";
 
 export type BatchIdioma = "es" | "en" | "ambos";
 
 interface BatchOptions extends RenderOptions {
   idioma?: BatchIdioma;
+  startDate?: string;
 }
 
 class RenderQueue extends EventEmitter {
@@ -44,7 +46,7 @@ class RenderQueue extends EventEmitter {
     if (this.isRunning) throw new Error("Ya hay un lote en proceso");
 
     this.isRunning = true;
-    const { idioma = "ambos", ...renderOpts } = options;
+    const { idioma = "ambos", startDate, ...renderOpts } = options;
     const total = hasta - desde + 1;
     const batchId = `batch-${desde}-${hasta}-${Date.now()}`;
 
@@ -57,13 +59,16 @@ class RenderQueue extends EventEmitter {
       this.currentProgress.actual = n;
       this.emit("progress", { ...this.currentProgress });
 
+      const index = n - desde;
+      const scheduledAt = startDate ? calculatePublishAt(startDate, index) : undefined;
+
       try {
         if (idioma === "ambos") {
-          await renderAngelNumberDual(n, renderOpts);
+          await renderAngelNumberDual(n, { ...renderOpts, scheduledAt });
         } else {
-          await renderAngelNumber(n, idioma, renderOpts);
+          await renderAngelNumber(n, idioma, { ...renderOpts, scheduledAt });
         }
-        await sendWebhook(n, batchId);
+        await sendWebhook(n, batchId, scheduledAt);
         this.currentProgress.completado++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

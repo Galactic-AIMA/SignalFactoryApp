@@ -5,7 +5,7 @@ import { VIBRATION_GROUPS } from "@/types";
 
 const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "";
 
-export async function sendWebhook(angelNumberId: number, batchId?: string): Promise<boolean> {
+export async function sendWebhook(angelNumberId: number, batchId?: string, publishAt?: string): Promise<boolean> {
   if (!WEBHOOK_URL) {
     log("webhook", `Webhook URL no configurada — skipping número ${angelNumberId}`);
     return false;
@@ -40,6 +40,7 @@ export async function sendWebhook(angelNumberId: number, batchId?: string): Prom
       tags: r.idioma === "es"
         ? [`número angelical ${angelNumberId}`, `significado ${angelNumberId}`, "señales divinas", "espiritualidad", "numerología", grupo.name]
         : [`angel number ${angelNumberId}`, `${angelNumberId} meaning`, "divine signs", "spirituality", "numerology"],
+      ...(publishAt ? { publishAt } : {}),
     })),
     batch_id: batchId,
     timestamp: new Date().toISOString(),

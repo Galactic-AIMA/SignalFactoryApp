@@ -45,6 +45,7 @@ export interface RenderOptions {
   backgroundId?: number;
   audioId?: number;
   onProgress?: (progress: number) => void;
+  scheduledAt?: string;
 }
 
 export async function renderAngelNumber(
@@ -58,7 +59,7 @@ export async function renderAngelNumber(
 
   if (!number) throw new Error(`Número ${angelNumberId} no encontrado en la base de datos`);
 
-  const { estilo = "unified", efecto = "fadeIn", backgroundId, audioId, onProgress } = options;
+  const { estilo = "unified", efecto = "fadeIn", backgroundId, audioId, onProgress, scheduledAt } = options;
   const texto = idioma === "es" ? number.texto_es : number.texto_en;
   const channelName = idioma === "es" ? "TU SEÑAL DE HOY" : "YOUR DAILY SIGN";
 
@@ -124,9 +125,9 @@ export async function renderAngelNumber(
   }
 
   db.prepare(`
-    INSERT INTO renders (angel_number_id, idioma, background_id, audio_id, estilo, efecto_texto, archivo_output, video_url, duracion_seg)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 10)
-  `).run(angelNumberId, idioma, background.id, audio.id, estilo, efecto, outputPath, videoUrl);
+    INSERT INTO renders (angel_number_id, idioma, background_id, audio_id, estilo, efecto_texto, archivo_output, video_url, duracion_seg, scheduled_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 10, ?)
+  `).run(angelNumberId, idioma, background.id, audio.id, estilo, efecto, outputPath, videoUrl, scheduledAt ?? null);
 
   // Actualizar estado del número según idioma renderizado
   const current = db.prepare("SELECT estado FROM angel_numbers WHERE id = ?")

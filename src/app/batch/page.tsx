@@ -15,6 +15,7 @@ interface SavedBatch {
   idioma: "es" | "en" | "ambos";
   estilo: VideoStyle;
   efecto: TextEffect;
+  startDate: string;
 }
 
 export default function BatchPage() {
@@ -24,11 +25,12 @@ export default function BatchPage() {
     try { return JSON.parse(sessionStorage.getItem(SS_KEY) || "null"); } catch { return null; }
   })();
 
-  const [desde,  setDesde]  = useState(saved?.desde  ?? 0);
-  const [hasta,  setHasta]  = useState(saved?.hasta   ?? 9);
-  const [idioma, setIdioma] = useState<"es" | "en" | "ambos">(saved?.idioma ?? "ambos");
-  const [estilo, setEstilo] = useState<VideoStyle>(saved?.estilo ?? "unified");
-  const [efecto, setEfecto] = useState<TextEffect>(saved?.efecto ?? "fadeIn");
+  const [desde,     setDesde]     = useState(saved?.desde     ?? 0);
+  const [hasta,     setHasta]     = useState(saved?.hasta     ?? 9);
+  const [idioma,    setIdioma]    = useState<"es" | "en" | "ambos">(saved?.idioma ?? "ambos");
+  const [estilo,    setEstilo]    = useState<VideoStyle>(saved?.estilo ?? "unified");
+  const [efecto,    setEfecto]    = useState<TextEffect>(saved?.efecto ?? "fadeIn");
+  const [startDate, setStartDate] = useState(saved?.startDate ?? "");
 
   const [progress,     setProgress]     = useState<RenderProgress | null>(null);
   const [running,      setRunning]      = useState(false);
@@ -41,7 +43,7 @@ export default function BatchPage() {
 
   function persistFormState(overrides: Partial<SavedBatch> = {}) {
     const state: SavedBatch = {
-      desde, hasta, idioma, estilo, efecto, ...overrides,
+      desde, hasta, idioma, estilo, efecto, startDate, ...overrides,
     };
     sessionStorage.setItem(SS_KEY, JSON.stringify(state));
   }
@@ -99,7 +101,7 @@ export default function BatchPage() {
     const res = await fetch("/api/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ desde, hasta, idioma, estilo, efecto }),
+      body: JSON.stringify({ desde, hasta, idioma, estilo, efecto, ...(startDate ? { startDate } : {}) }),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -188,6 +190,61 @@ export default function BatchPage() {
             >
               Cancelar
             </button>
+          )}
+        </div>
+
+        {/* Programación de publicación */}
+        <div className="pt-3 border-t border-sf-border w-full">
+          <div className="flex items-end gap-4 flex-wrap">
+            <div>
+              <label className="text-xs text-sf-muted block mb-1">
+                Publicar desde <span className="opacity-60">(opcional)</span>
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                min={new Date().toISOString().split("T")[0]}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-sf-bg border border-sf-border rounded-md px-3 py-1.5 text-sm"
+              />
+            </div>
+            {startDate && (
+              <button
+                type="button"
+                onClick={() => setStartDate("")}
+                className="text-xs text-sf-muted hover:text-red-400 transition-colors mb-2"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          {startDate && (
+            <div className="mt-3 p-3 bg-sf-bg rounded-lg border border-sf-border">
+              <p className="text-xs font-semibold text-sf-muted mb-2">
+                Calendario · 8:00 AM Bogotá
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: Math.min(hasta - desde + 1, 12) }, (_, i) => {
+                  const d = new Date(`${startDate}T13:00:00.000Z`);
+                  d.setUTCDate(d.getUTCDate() + i);
+                  const label = d.toLocaleDateString("es-CO", {
+                    day: "numeric", month: "short", timeZone: "America/Bogota",
+                  });
+                  return (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded bg-sf-surface border border-sf-border">
+                      <span className="text-sf-muted">#{desde + i}</span>
+                      <span className="text-sf-text ml-1">{label}</span>
+                    </span>
+                  );
+                })}
+                {hasta - desde + 1 > 12 && (
+                  <span className="text-xs text-sf-muted self-center">
+                    +{hasta - desde + 1 - 12} más
+                  </span>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

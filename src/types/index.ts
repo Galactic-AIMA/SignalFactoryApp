@@ -67,6 +67,7 @@ export interface Render {
   webhook_enviado: boolean;
   webhook_response: string | null;
   youtube_video_id: string | null;
+  scheduled_at: string | null;
   created_at: string;
 }
 
@@ -149,6 +150,7 @@ export interface WebhookPayload {
     titulo: string;
     descripcion: string;
     tags: string[];
+    publishAt?: string;
   }[];
   batch_id?: string;
   timestamp: string;
@@ -170,6 +172,7 @@ export interface BatchRequest {
   hasta: number;
   estilo?: VideoStyle;
   efecto?: TextEffect;
+  startDate?: string;
 }
 
 export interface RenderProgress {

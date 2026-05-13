@@ -74,4 +74,11 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_renders_angel_number ON renders(angel_number_id);
     CREATE INDEX IF NOT EXISTS idx_angel_numbers_estado ON angel_numbers(estado);
   `);
+
+  // Migración no-destructiva: añadir scheduled_at si no existe
+  try {
+    db.exec(`ALTER TABLE renders ADD COLUMN scheduled_at DATETIME NULL`);
+  } catch {
+    // Columna ya existe — ignorar
+  }
 }
