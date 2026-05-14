@@ -142,6 +142,7 @@ export default function BatchPage() {
   const [initializing, setInitializing] = useState(true);
   const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
   const [eta,          setEta]          = useState<string | null>(null);
+  const [lastBatchId,  setLastBatchId]  = useState<string | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const startTimeRef   = useRef<number | null>(null);
@@ -183,6 +184,7 @@ export default function BatchPage() {
       sessionStorage.removeItem(SS_START);
       sessionStorage.removeItem(SS_KEY);
       stopPolling();
+      if (data.batchId) setLastBatchId(data.batchId);
     }
   }
 
@@ -245,11 +247,17 @@ export default function BatchPage() {
           startPolling();
         } else if (lastJob) {
           setBatchLog(lastJob.log);
+          setLastBatchId(lastJob.id);
           setProgress({
             total: lastJob.total,
             completado: lastJob.completado,
             actual: lastJob.hasta,
             status: lastJob.status === "done" ? "done" : lastJob.status === "error" ? "error" : "idle",
+            batchId: lastJob.id,
+            desde: lastJob.desde,
+            hasta: lastJob.hasta,
+            idioma: lastJob.idioma,
+            startDate: lastJob.start_date ?? undefined,
           });
         }
       })
@@ -307,9 +315,30 @@ export default function BatchPage() {
     await fetch("/api/batch", { method: "DELETE" });
   }
 
+  async function handleRetry() {
+    if (!lastBatchId) return;
+    setErrorMsg(null);
+    const res = await fetch("/api/batch", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: lastBatchId }),
+    });
+    const data = await res.json();
+    if (!data.ok) { setErrorMsg(data.error); return; }
+    setBatchLog([]);
+    sessionStorage.setItem(SS_START, String(Date.now()));
+    startTimeRef.current = Date.now();
+    setRunning(true);
+    setEta(null);
+    connectSSE();
+    startPolling();
+  }
+
   const pct = progress && progress.total > 0
     ? Math.round((progress.completado / progress.total) * 100)
     : 0;
+
+  const failedCount = batchLog.filter((e) => e.status === "error").length;
 
   const totalVideos = idioma === "ambos" ? (hasta - desde + 1) * 2 : hasta - desde + 1;
   const startDateStr = startDate ? format(startDate, "yyyy-MM-dd") : undefined;
@@ -504,18 +533,33 @@ export default function BatchPage() {
               {eta && progress.status === "rendering" && (
                 <p className="text-xs text-sf-muted">{eta} restantes</p>
               )}
-              <span className={`text-sm font-medium ${
-                progress.status === "done"  ? "text-green-400" :
-                progress.status === "error" ? "text-red-400"   : "text-sf-accent"
-              }`}>
-                {progress.status === "rendering"
-                  ? `▶ Número #${progress.actual}`
-                  : progress.status === "done"
-                    ? "✅ Completado"
-                    : "❌ Error / Cancelado"}
-              </span>
+              <div className="flex flex-col items-end gap-1.5">
+                <span className={`text-sm font-medium ${
+                  progress.status === "done"  ? "text-green-400" :
+                  progress.status === "error" ? "text-red-400"   : "text-sf-accent"
+                }`}>
+                  {progress.status === "rendering"
+                    ? `▶ Número #${progress.actual}`
+                    : progress.status === "done"
+                      ? "✅ Completado"
+                      : "❌ Error / Cancelado"}
+                </span>
+                {(progress.status === "done" || progress.status === "error") && failedCount > 0 && lastBatchId && (
+                  <button
+                    onClick={handleRetry}
+                    className="text-xs px-3 py-1 rounded-md border border-orange-500/50 text-orange-400 hover:bg-orange-500/10 transition-colors"
+                  >
+                    ↺ Reintentar fallidos ({failedCount})
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Mensaje de preparación (descarga de audios) */}
+          {progress.mensaje && (
+            <p className="text-xs text-sf-accent animate-pulse">{progress.mensaje}</p>
+          )}
 
           {/* Barra de progreso */}
           <div className="w-full bg-sf-bg rounded-full h-2.5 overflow-hidden">

@@ -53,6 +53,23 @@ export async function DELETE() {
   return NextResponse.json({ ok: true, mensaje: "Lote cancelado" });
 }
 
+export async function PATCH(req: NextRequest) {
+  try {
+    const { jobId } = await req.json() as { jobId: string };
+    if (!jobId) {
+      return NextResponse.json({ ok: false, error: "jobId requerido" }, { status: 400 });
+    }
+    if (renderQueue.isActive()) {
+      return NextResponse.json({ ok: false, error: "Ya hay un lote en proceso" }, { status: 409 });
+    }
+    renderQueue.renderRetry(jobId).catch(() => {});
+    return NextResponse.json({ ok: true, mensaje: "Reintentando números fallidos..." });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ ok: false, error: msg }, { status: 400 });
+  }
+}
+
 const schema = z.object({
   desde: z.number().int().min(0).max(999),
   hasta: z.number().int().min(0).max(999),

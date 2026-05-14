@@ -63,7 +63,15 @@ export async function renderAngelNumber(
   const texto = idioma === "es" ? number.texto_es : number.texto_en;
   const channelName = idioma === "es" ? "TU SEÑAL DE HOY" : "YOUR DAILY SIGN";
 
-  const { background, audio } = assignAssets(angelNumberId, number.grupo, idioma, backgroundId, audioId);
+  // Excluir assets del render previo del mismo número (evita que ES y EN compartan background/audio)
+  const prevRender = db.prepare(
+    "SELECT background_id, audio_id FROM renders WHERE angel_number_id = ? ORDER BY rendered_at DESC LIMIT 1"
+  ).get(angelNumberId) as { background_id: number; audio_id: number } | undefined;
+
+  const { background, audio } = assignAssets(
+    angelNumberId, number.grupo, idioma, backgroundId, audioId,
+    { backgroundId: prevRender?.background_id, audioId: prevRender?.audio_id }
+  );
 
   // Convertir paths absolutos a relativos desde assets/ para staticFile()
   const assetsDir = path.resolve(process.cwd(), "assets");
