@@ -65,7 +65,7 @@ export async function renderAngelNumber(
 
   // Excluir assets del render previo del mismo número (evita que ES y EN compartan background/audio)
   const prevRender = db.prepare(
-    "SELECT background_id, audio_id FROM renders WHERE angel_number_id = ? ORDER BY rendered_at DESC LIMIT 1"
+    "SELECT background_id, audio_id FROM renders WHERE angel_number_id = ? ORDER BY created_at DESC LIMIT 1"
   ).get(angelNumberId) as { background_id: number; audio_id: number } | undefined;
 
   const { background, audio } = assignAssets(

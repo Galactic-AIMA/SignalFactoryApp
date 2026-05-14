@@ -152,7 +152,8 @@ class RenderQueue extends EventEmitter {
 
         addLog(mkEntry(n, "ambos", "webhook", "running", `#${n} → Enviando a n8n...`));
         emitProgress();
-        await sendWebhook(n, batchId, scheduledAt);
+        const webhookOk = await sendWebhook(n, batchId, scheduledAt);
+        if (!webhookOk) throw new Error("Webhook falló — revisa la URL de n8n y que el servidor esté activo");
         addLog(mkEntry(n, "ambos", "webhook", "done", `#${n} → Webhook enviado ✓`));
 
         this.currentProgress.completado++;
@@ -161,7 +162,7 @@ class RenderQueue extends EventEmitter {
         emitProgress();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        addLog(mkEntry(n, "ambos", "render", "error", `#${n} → Error: ${msg}`));
+        addLog(mkEntry(n, "ambos", "webhook", "error", `#${n} → Error: ${msg}`));
         emitProgress();
         log("error", `Error en número ${n}: ${msg}`, { angelNumber: n, batchId });
       }
@@ -277,7 +278,8 @@ class RenderQueue extends EventEmitter {
 
         addLog(mkEntry(n, "ambos", "webhook", "running", `#${n} → Enviando a n8n...`));
         emitProgress();
-        await sendWebhook(n, batchId, scheduledAt);
+        const webhookOk = await sendWebhook(n, batchId, scheduledAt);
+        if (!webhookOk) throw new Error("Webhook falló — revisa la URL de n8n y que el servidor esté activo");
         addLog(mkEntry(n, "ambos", "webhook", "done", `#${n} → Webhook enviado ✓`));
 
         this.currentProgress.completado++;
@@ -286,7 +288,7 @@ class RenderQueue extends EventEmitter {
         emitProgress();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        addLog(mkEntry(n, "ambos", "render", "error", `#${n} → Error: ${msg}`));
+        addLog(mkEntry(n, "ambos", "webhook", "error", `#${n} → Error: ${msg}`));
         emitProgress();
         log("error", `Error reintentando número ${n}: ${msg}`, { angelNumber: n, batchId });
       }
